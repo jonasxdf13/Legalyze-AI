@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Legalyze AI - Analizador de Fraude Legal</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              200: '#bae6fd',
+              300: '#7dd3fc',
+              400: '#38bdf8',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+              800: '#075985',
+              900: '#0c4a6e'
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; transition: all 0.3s ease; }
+    .panel { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(226, 232, 240, 0.8); }
+    .dark .panel { background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(51, 65, 85, 0.8); }
+    .gradient-text { background: linear-gradient(90deg, #0ea5e9, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+    #camera-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 3000; background: black; display: none; flex-direction: column;
+    }
+    #focus-frame {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 80%; height: 60%; border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 24px; pointer-events: none;
+    }
+    .frame-corner { position: absolute; width: 30px; height: 30px; border: 4px solid white; }
+    .top-left { top: -2px; left: -2px; border-right: 0; border-bottom: 0; border-radius: 20px 0 0 0; }
+    .top-right { top: -2px; right: -2px; border-left: 0; border-bottom: 0; border-radius: 0 20px 0 0; }
+    .bottom-left { bottom: -2px; left: -2px; border-right: 0; border-top: 0; border-radius: 0 0 0 20px; }
+    .bottom-right { bottom: -2px; right: -2px; border-left: 0; border-top: 0; border-radius: 0 0 20px 0; }
+
+    .shutter-btn {
+      width: 70px; height: 70px; background: white; border-radius: 50%;
+      border: 4px solid rgba(255,255,255,0.2); box-shadow: 0 0 0 4px white;
+    }
+
+    .drag-over { border: 2px dashed #0ea5e9 !important; background: rgba(14, 165, 233, 0.05) !important; }
+
+    .result-card { cursor: pointer; border-left-width: 4px; transition: all 0.2s; position: relative; }
+    .selected-card { border-color: #0ea5e9 !important; background: #f0f9ff !important; }
+    .dark .selected-card { background: rgba(12, 74, 110, 0.2) !important; }
+
+    .fraud-high { border-left-color: #ef4444 !important; }
+    .fraud-medium { border-left-color: #f59e0b !important; }
+    .fraud-low { border-left-color: #3b82f6 !important; }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .chat-msg {
+      margin-bottom: 12px;
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      line-height: 1.5;
+      font-size: 11px;
+      animation: fadeInUp 0.3s ease-out forwards;
+    }
+    .msg-ia { background: #f1f5f9; align-self: flex-start; border-bottom-left-radius: 4px; color: #1e293b; }
+    .dark .msg-ia { background: #1e293b; color: #e2e8f0; }
+    .msg-user { background: #0ea5e9; color: white; align-self: flex-end; border-bottom-right-radius: 4px; box-shadow: 0 4px 12px rgba(14, 165, 233, 0.2); }
+  </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen">
+  <div id="camera-overlay">
+    <video id="video" autoplay playsinline class="w-full h-full object-cover"></video>
+    <div id="focus-frame">
+      <div class="frame-corner top-left"></div>
+      <div class="frame-corner top-right"></div>
+      <div class="frame-corner bottom-left"></div>
+      <div class="frame-corner bottom-right"></div>
+    </div>
+    <div class="absolute top-0 left-0 w-full p-6 flex justify-between items-start bg-gradient-to-b from-black/80 to-transparent">
+      <button id="close-camera" class="text-white text-2xl p-2 bg-black/20 rounded-full w-12 h-12 flex items-center justify-center backdrop-blur-md" aria-label="Cerrar cámara">
+        <i class="fas fa-times"></i>
+      </button>
+      <div class="bg-black/40 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 text-white text-[10px] font-bold uppercase tracking-wider">Modo Escáner</div>
+      <div class="w-12"></div>
+    </div>
+    <div class="absolute bottom-0 left-0 w-full p-12 flex justify-center bg-gradient-to-t from-black/80 to-transparent">
+      <button id="snap" class="shutter-btn active:scale-90 transition-transform" aria-label="Tomar foto"></button>
+    </div>
+  </div>
+
+  <div id="modal-options" class="fixed inset-0 z-[4000] hidden items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div class="panel w-full max-w-md rounded-3xl shadow-2xl overflow-hidden p-8 space-y-6">
+      <div class="text-center space-y-2">
+        <div class="w-16 h-16 bg-primary-100 dark:bg-primary-900/30 text-primary-600 rounded-full flex items-center justify-center mx-auto mb-4">
+          <i class="fas fa-user-shield text-2xl"></i>
+        </div>
+        <h3 class="font-bold text-xl">¿Cómo deseas generar la carta?</h3>
+        <p class="text-slate-500 text-xs">Elige si deseas incluir tus datos personales o dejar los campos vacíos.</p>
+      </div>
+      <div class="grid grid-cols-1 gap-3">
+        <button id="claim-with-data" class="w-full p-4 border-2 border-primary-500 bg-primary-50 dark:bg-primary-900/10 rounded-2xl flex items-center gap-4 hover:brightness-105 transition-all text-left">
+          <div class="w-10 h-10 bg-primary-600 text-white rounded-xl flex items-center justify-center shrink-0"><i class="fas fa-id-card"></i></div>
+          <div>
+            <p class="font-bold text-xs">Con mis datos personales</p>
+            <p class="text-[10px] text-slate-500">Incluye nombre, DNI y fecha actual.</p>
+          </div>
+        </button>
+        <button id="claim-without-data" class="w-full p-4 border-2 border-slate-200 dark:border-slate-800 rounded-2xl flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all text-left">
+          <div class="w-10 h-10 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl flex items-center justify-center shrink-0"><i class="fas fa-user-secret"></i></div>
+          <div>
+            <p class="font-bold text-xs">Sin datos personales</p>
+            <p class="text-[10px] text-slate-500">Campos en blanco para rellenar a mano.</p>
+          </div>
+        </button>
+      </div>
+      <button id="close-options" class="w-full text-slate-400 text-xs font-bold uppercase tracking-widest pt-2">Cancelar</button>
+    </div>
+  </div>
+
+  <div id="modal-claim" class="fixed inset-0 z-[4500] hidden items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div class="panel w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="p-6 border-b dark:border-slate-800 flex justify-between items-center bg-white dark:bg-slate-900">
+        <h3 class="font-bold text-lg">Reclamación de Fraude</h3>
+        <button id="close-claim" class="text-slate-400 hover:text-red-500" aria-label="Cerrar reclamación"><i class="fas fa-times text-xl"></i></button>
+      </div>
+      <div class="p-6 overflow-y-auto space-y-6">
+        <div id="claim-preview" class="p-8 bg-slate-50 dark:bg-slate-950 rounded-xl border border-dashed dark:border-slate-700 font-serif text-sm leading-relaxed whitespace-pre-wrap min-h-[300px] text-slate-800 dark:text-slate-300"></div>
+      </div>
+      <div class="p-4 border-t dark:border-slate-800 flex gap-3 bg-white dark:bg-slate-900">
+        <button id="copy-claim" class="flex-1 bg-slate-200 dark:bg-slate-800 py-4 rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors">Copiar Texto</button>
+        <button id="download-claim" class="flex-1 bg-primary-600 text-white py-4 rounded-xl font-bold text-[10px] uppercase tracking-widest shadow-lg shadow-primary-500/20 hover:brightness-110">Descargar PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <nav class="sticky top-0 z-50 panel px-6 py-4 shadow-sm">
+    <div class="max-w-7xl mx-auto flex justify-between items-center">
+      <div class="flex items-center gap-3">
+        <div class="bg-primary-600 p-2 rounded-xl shadow-lg"><i class="fas fa-balance-scale text-white"></i></div>
+        <h1 class="text-xl font-bold gradient-text tracking-tight">Legalyze AI</h1>
+      </div>
+      <button id="theme-toggle" class="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg" aria-label="Cambiar tema">
+        <i class="fas fa-moon dark:hidden"></i>
+        <i class="fas fa-sun hidden dark:block text-yellow-400"></i>
+      </button>
+    </div>
+  </nav>
+
+  <main class="max-w-screen-2xl mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-10 gap-6">
+    <div class="lg:col-span-2 space-y-4">
+      <div class="flex justify-between items-center px-1">
+        <h2 class="text-[10px] font-black uppercase tracking-widest text-slate-500">Entrada</h2>
+        <div class="flex gap-1">
+          <button id="camera-btn" title="Cámara" class="p-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg hover:bg-primary-500 hover:text-white transition-all"><i class="fas fa-camera text-[10px]"></i></button>
+          <label title="Subir" class="p-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg cursor-pointer hover:bg-primary-500 hover:text-white transition-all">
+            <i class="fas fa-upload text-[10px]"></i>
+            <input type="file" id="file-input" class="hidden" accept=".pdf,image/*" />
+          </label>
+        </div>
+      </div>
+
+      <div id="drop-zone" class="panel rounded-3xl overflow-hidden flex flex-col min-h-[450px] shadow-xl border-2 border-transparent transition-all">
+        <div id="attachment-area" class="hidden p-4 border-b dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50"></div>
+        <div id="img-preview-container" class="hidden p-4 bg-slate-100 dark:bg-slate-900 border-b dark:border-slate-800 relative">
+          <div class="bg-white dark:bg-slate-800 p-2 rounded-xl shadow-lg border dark:border-slate-700">
+            <img id="img-preview" class="max-h-[150px] w-full object-contain mx-auto rounded-lg" alt="Vista previa del documento" />
+          </div>
+          <button id="remove-img" class="absolute top-6 right-6 bg-red-500 text-white w-7 h-7 rounded-full shadow-lg flex items-center justify-center hover:scale-110 transition-transform z-10" aria-label="Eliminar imagen">
+            <i class="fas fa-times text-[10px]"></i>
+          </button>
+        </div>
+        <textarea id="text-input" class="flex-1 p-4 bg-transparent resize-none focus:outline-none text-[11px] leading-relaxed placeholder:text-slate-400" placeholder="Contenido legal..."></textarea>
+        <div class="p-3 border-t dark:border-slate-800 bg-white/50 dark:bg-slate-900/50">
+          <button id="analyze-btn" class="w-full bg-slate-900 dark:bg-primary-600 text-white py-3 rounded-xl font-black text-[9px] uppercase tracking-widest active:scale-[0.98] transition-all shadow-lg">Analizar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="lg:col-span-2 space-y-4">
+      <h2 class="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1">Hallazgos</h2>
+      <div id="results-box" class="panel rounded-3xl p-4 h-[450px] shadow-xl flex flex-col">
+        <div id="empty-state" class="flex-1 flex flex-col items-center justify-center text-slate-400 py-10 text-center">
+          <i class="fas fa-search text-2xl mb-3 opacity-20"></i>
+          <p class="text-[10px] font-medium max-w-[120px]">Sube un contrato o escribe texto.</p>
+        </div>
+        <div id="results-list" class="hidden space-y-2 flex-1 overflow-y-auto pr-1"></div>
+        <div id="claim-actions" class="hidden pt-3 border-t dark:border-slate-800 mt-2">
+          <button id="open-claim-options" class="w-full bg-primary-600 text-white py-3 rounded-xl font-black text-[9px] uppercase tracking-widest hover:brightness-110 shadow-lg transition-all">Reclamar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="lg:col-span-6 space-y-4">
+      <h2 class="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1">Asistente Legal IA</h2>
+      <div class="panel rounded-3xl h-[450px] flex flex-col shadow-xl overflow-hidden">
+        <div id="chat-history" class="flex-1 p-6 overflow-y-auto flex flex-col space-y-4"></div>
+        <div class="p-4 bg-white dark:bg-slate-900 border-t dark:border-slate-800 flex gap-3">
+          <input type="text" id="chat-input" class="flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl px-5 py-3 text-[12px] outline-none border border-transparent focus:border-primary-500 transition-all" placeholder="Escribe aquí tu duda legal detallada..." />
+          <button id="send-chat" class="bg-primary-600 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg shadow-primary-500/20 hover:scale-105 transition-transform" aria-label="Enviar mensaje">
+            <i class="fas fa-paper-plane text-sm"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const chatHistory = document.getElementById('chat-history');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-chat');
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const attachmentArea = document.getElementById('attachment-area');
+    const textInput = document.getElementById('text-input');
+    const imgContainer = document.getElementById('img-preview-container');
+    const imgPreview = document.getElementById('img-preview');
+    const resultsList = document.getElementById('results-list');
+    const emptyState = document.getElementById('empty-state');
+    const analyzeBtn = document.getElementById('analyze-btn');
+    const removeImgBtn = document.getElementById('remove-img');
+    const claimActions = document.getElementById('claim-actions');
+
+    let selectedFrauds = new Set();
+    let currentFrauds = [];
+
+    const db = [
+      { id: 1, title: 'Comisión de apertura', level: 'Alto', desc: 'Cobro sin una justificación transparente de servicio.', severity: 'high' },
+      { id: 2, title: 'Gastos de notaría', level: 'Medio', desc: 'Asignación del 100% al consumidor sin reparto proporcional.', severity: 'medium' },
+      { id: 3, title: 'Interés de demora', level: 'Alto', desc: 'Tipo de interés por encima de límites jurisprudenciales.', severity: 'high' }
+    ];
+
+    const state = {
+      hasImage: false,
+      hasPdf: false,
+      pdfName: '',
+      isAnalyzing: false
+    };
+
+    function hasInputToAnalyze() {
+      return Boolean(textInput.value.trim() || state.hasImage || state.hasPdf);
+    }
+
+    function setAnalyzeButtonState() {
+      const disabled = state.isAnalyzing || !hasInputToAnalyze();
+      analyzeBtn.disabled = disabled;
+      analyzeBtn.classList.toggle('opacity-50', disabled);
+      analyzeBtn.classList.toggle('cursor-not-allowed', disabled);
+    }
+
+    function clearPdfView() {
+      state.hasPdf = false;
+      state.pdfName = '';
+      attachmentArea.classList.add('hidden');
+      attachmentArea.innerHTML = '';
+      fileInput.value = '';
+      setAnalyzeButtonState();
+    }
+
+    function clearImageView() {
+      state.hasImage = false;
+      imgContainer.classList.add('hidden');
+      imgPreview.src = '';
+      fileInput.value = '';
+      setAnalyzeButtonState();
+    }
+
+    function handleFile(file) {
+      if (!file) return;
+      resetAnalysis();
+
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          imgPreview.src = e.target.result;
+          imgContainer.classList.remove('hidden');
+          clearPdfView();
+          state.hasImage = true;
+          textInput.value = '';
+          setAnalyzeButtonState();
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        state.hasPdf = true;
+        state.pdfName = file.name;
+        clearImageView();
+        textInput.value = '';
+        attachmentArea.classList.remove('hidden');
+        attachmentArea.innerHTML = `
+          <div class="flex flex-col items-center justify-center p-4 bg-white dark:bg-slate-800 rounded-2xl border border-primary-500/20 shadow-sm relative group">
+            <div class="w-12 h-12 bg-red-100 dark:bg-red-900/30 text-red-600 rounded-xl flex items-center justify-center mb-2">
+               <i class="fas fa-file-pdf text-xl"></i>
+            </div>
+            <p class="text-[9px] font-bold text-slate-800 dark:text-slate-100 truncate w-full text-center" title="${file.name}">${file.name}</p>
+            <button id="remove-pdf" class="absolute -top-1 -right-1 bg-red-500 text-white w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all" aria-label="Eliminar PDF">
+               <i class="fas fa-times text-[10px]"></i>
+            </button>
+          </div>
+        `;
+        document.getElementById('remove-pdf').addEventListener('click', clearPdfView);
+        setAnalyzeButtonState();
+        return;
+      }
+
+      alert('Formato no soportado. Sube una imagen o un PDF.');
+    }
+
+    function resetAnalysis() {
+      selectedFrauds.clear();
+      currentFrauds = [];
+      resultsList.innerHTML = '';
+      resultsList.classList.add('hidden');
+      claimActions.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+    }
+
+    function renderResults() {
+      resultsList.innerHTML = currentFrauds.map((f) => `
+        <button type="button" class="result-card w-full text-left p-3 rounded-lg border bg-white dark:bg-slate-900 shadow-sm fraud-${f.severity} ${selectedFrauds.has(f.id) ? 'selected-card' : ''}" data-id="${f.id}">
+          <div class="flex justify-between items-start gap-2">
+            <h4 class="text-[10px] font-bold">${f.title}</h4>
+            <span class="text-[8px] uppercase tracking-wide font-bold ${f.severity === 'high' ? 'text-red-500' : f.severity === 'medium' ? 'text-amber-500' : 'text-blue-500'}">${f.level}</span>
+          </div>
+          <p class="text-[9px] text-slate-500 mt-1">${f.desc}</p>
+        </button>
+      `).join('');
+    }
+
+    function toggleFraud(id) {
+      if (selectedFrauds.has(id)) selectedFrauds.delete(id);
+      else selectedFrauds.add(id);
+      renderResults();
+    }
+
+    function addMessage(text, role) {
+      const msg = document.createElement('div');
+      msg.className = `chat-msg ${role === 'user' ? 'msg-user' : 'msg-ia'}`;
+      msg.innerText = text;
+      chatHistory.appendChild(msg);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    async function copyClaim() {
+      const claimText = document.getElementById('claim-preview').innerText;
+      if (!claimText.trim()) return;
+      try {
+        await navigator.clipboard.writeText(claimText);
+        alert('Texto copiado al portapapeles.');
+      } catch {
+        alert('No se pudo copiar automáticamente. Selecciona y copia manualmente.');
+      }
+    }
+
+    function closeOptionsModal() { document.getElementById('modal-options').classList.replace('flex', 'hidden'); }
+    function openOptionsModal() { document.getElementById('modal-options').classList.replace('hidden', 'flex'); }
+    function closeClaimModal() { document.getElementById('modal-claim').classList.replace('flex', 'hidden'); }
+
+    function confirmClaimGeneration(includeData) {
+      const selected = currentFrauds.filter((f) => selectedFrauds.has(f.id));
+      const includedFrauds = (selected.length ? selected : currentFrauds).map((f, idx) => `${idx + 1}. ${f.title}: ${f.desc}`).join('\n');
+      const currentDate = new Date().toLocaleDateString('es-ES');
+      const personalBlock = includeData
+        ? 'D./Dña. [Tu nombre y apellidos], con DNI [__________], y domicilio en [__________], comparece y como mejor proceda EXPONE:'
+        : 'D./Dña. ________________________, con DNI ________________________, y domicilio en ________________________, comparece y como mejor proceda EXPONE:';
+
+      document.getElementById('claim-preview').innerText = `ESCRITO DE RECLAMACIÓN PREVIA\n\nFecha: ${currentDate}\n\n${personalBlock}\n\nQue, tras revisar el contrato aportado, se han detectado posibles cláusulas abusivas o prácticas irregulares:\n${includedFrauds}\n\nPor lo expuesto, SOLICITO:\n1) La revisión y eliminación de las condiciones indicadas.\n2) La restitución de cantidades indebidamente cobradas, con sus intereses legales.\n3) Respuesta escrita en el plazo legal correspondiente.\n\nEn [Ciudad], a ${currentDate}.\n\nFirma:\n________________________`;
+
+      closeOptionsModal();
+      document.getElementById('modal-claim').classList.replace('hidden', 'flex');
+    }
+
+    sendBtn.addEventListener('click', () => {
+      const value = chatInput.value.trim();
+      if (!value) return;
+      addMessage(value, 'user');
+      chatInput.value = '';
+      setTimeout(() => {
+        addMessage('Analizando tu consulta... Según el Derecho Civil español, este punto podría ser impugnable. Si quieres, puedo ayudarte a redactar una reclamación formal.', 'ia');
+      }, 600);
+    });
+
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendBtn.click();
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files?.[0]) handleFile(e.dataTransfer.files[0]);
+    });
+
+    analyzeBtn.addEventListener('click', () => {
+      if (!hasInputToAnalyze() || state.isAnalyzing) return;
+      state.isAnalyzing = true;
+      setAnalyzeButtonState();
+      analyzeBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Analizando...';
+
+      setTimeout(() => {
+        currentFrauds = [...db];
+        renderResults();
+        emptyState.classList.add('hidden');
+        resultsList.classList.remove('hidden');
+        claimActions.classList.remove('hidden');
+        analyzeBtn.innerText = 'Analizar';
+        state.isAnalyzing = false;
+        setAnalyzeButtonState();
+      }, 900);
+    });
+
+    removeImgBtn.addEventListener('click', clearImageView);
+
+    resultsList.addEventListener('click', (e) => {
+      const card = e.target.closest('[data-id]');
+      if (!card) return;
+      toggleFraud(Number(card.dataset.id));
+    });
+
+    textInput.addEventListener('input', () => {
+      if (textInput.value.trim()) {
+        clearPdfView();
+        clearImageView();
+      }
+      setAnalyzeButtonState();
+    });
+
+    const cameraOverlay = document.getElementById('camera-overlay');
+    const video = document.getElementById('video');
+    let stream = null;
+
+    async function openCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        video.srcObject = stream;
+        cameraOverlay.style.display = 'flex';
+      } catch {
+        alert('No fue posible acceder a la cámara en este dispositivo/navegador.');
+      }
+    }
+
+    function closeCamera() {
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+        stream = null;
+      }
+      video.srcObject = null;
+      cameraOverlay.style.display = 'none';
+    }
+
+    function snapPhoto() {
+      if (!video.videoWidth || !video.videoHeight) {
+        alert('La cámara aún no está lista. Intenta de nuevo en un segundo.');
+        return;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      imgPreview.src = canvas.toDataURL('image/png');
+      imgContainer.classList.remove('hidden');
+      clearPdfView();
+      state.hasImage = true;
+      resetAnalysis();
+      setAnalyzeButtonState();
+      closeCamera();
+    }
+
+    document.getElementById('camera-btn').addEventListener('click', openCamera);
+    document.getElementById('close-camera').addEventListener('click', closeCamera);
+    document.getElementById('snap').addEventListener('click', snapPhoto);
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      document.documentElement.classList.toggle('dark');
+    });
+
+    document.getElementById('open-claim-options').addEventListener('click', () => {
+      if (!currentFrauds.length) {
+        alert('Primero realiza un análisis del documento.');
+        return;
+      }
+      openOptionsModal();
+    });
+
+    document.getElementById('claim-with-data').addEventListener('click', () => confirmClaimGeneration(true));
+    document.getElementById('claim-without-data').addEventListener('click', () => confirmClaimGeneration(false));
+    document.getElementById('close-options').addEventListener('click', closeOptionsModal);
+    document.getElementById('close-claim').addEventListener('click', closeClaimModal);
+    document.getElementById('copy-claim').addEventListener('click', copyClaim);
+    document.getElementById('download-claim').addEventListener('click', () => alert('Función de descarga en preparación.'));
+
+    document.getElementById('modal-options').addEventListener('click', (e) => {
+      if (e.target.id === 'modal-options') closeOptionsModal();
+    });
+    document.getElementById('modal-claim').addEventListener('click', (e) => {
+      if (e.target.id === 'modal-claim') closeClaimModal();
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeOptionsModal();
+        closeClaimModal();
+        closeCamera();
+      }
+    });
+
+    window.addEventListener('load', () => {
+      addMessage('Hola. El área de consulta ahora es más amplia para tu comodidad. ¿En qué puedo ayudarte?', 'ia');
+      setAnalyzeButtonState();
+    });
+  </script>
+</body>
+</html>
